@@ -2,14 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
+import { parseHTML } from "linkedom";
 import {
+  assertUploadOk,
   assertUploadSizeOk,
-  assertUploadTypeOk,
   readTextHead,
+  UPLOAD_MIME_TYPES,
 } from "../../lib/extract/fileLimits.js";
 
 const appCode = readFileSync(
   new URL("../../ui/app.js", import.meta.url),
+  "utf8",
+);
+const appHtml = readFileSync(
+  new URL("../../ui/app.html", import.meta.url),
   "utf8",
 );
 const uploadCode = appCode.slice(
@@ -30,6 +36,10 @@ function uploadHarness() {
       add: (name) => errorClasses.add(name),
       remove: (name) => errorClasses.delete(name),
       contains: (name) => errorClasses.has(name),
+      toggle: (name, force) => {
+        if (force) errorClasses.add(name);
+        else errorClasses.delete(name);
+      },
     },
   };
   const input = {
@@ -50,8 +60,8 @@ function uploadHarness() {
           id
         ],
     },
+    assertUploadOk,
     assertUploadSizeOk,
-    assertUploadTypeOk,
     readTextHead,
     renderError: (target, message) => {
       target.textContent = message;
@@ -84,6 +94,19 @@ function uploadHarness() {
   };
 }
 
+test("file picker accept list matches the upload type gate (#472)", () => {
+  const { document } = parseHTML(appHtml);
+  const accept = document
+    .getElementById("fileUploadInput")
+    ?.getAttribute("accept");
+  const pickerExtensions = (accept || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .sort();
+  assert.deepEqual(pickerExtensions, Object.keys(UPLOAD_MIME_TYPES).sort());
+});
+
 for (const method of ["change", "drop"]) {
   test(`${method} rejects unsupported uploads before reading any bytes (#472)`, async () => {
     for (const [name, type] of [
@@ -110,7 +133,7 @@ for (const method of ["change", "drop"]) {
       assert.equal(reads, 0, name);
       assert.equal(harness.summaries.length, 0, name);
       assert.equal(harness.error.classList.contains("hidden"), false);
-      assert.match(harness.error.textContent, /Unsupported file type/);
+      assert.match(harness.error.textContent, /^Unsupported file type\./);
       assert.match(harness.error.textContent, /PDF, DOCX, TXT, Markdown/);
       assert.equal(harness.input.value, "");
     }

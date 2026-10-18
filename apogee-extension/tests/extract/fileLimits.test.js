@@ -10,12 +10,14 @@ import {
   MAX_PASTED_CHARS,
   MAX_UPLOAD_FILE_BYTES,
   MAX_UPLOAD_FILE_MB,
+  assertUploadOk,
   assertUploadSizeOk,
   assertUploadTypeOk,
   bytesToBase64,
   readTextHead,
   truncateExtractedText,
   truncatePastedText,
+  uploadExtension,
 } from "../../lib/extract/fileLimits.js";
 
 const supportedUploads = [
@@ -94,6 +96,28 @@ test("upload type gate rejects incompatible MIME types despite a supported exten
   );
   assert.throws(() =>
     assertUploadTypeOk({ name: "report.pdf", type: "text/plain" }),
+  );
+});
+
+test("upload gate runs kind then size and returns the extension (#472)", () => {
+  assert.equal(uploadExtension("NOTES.TXT"), ".txt");
+  assert.equal(uploadExtension("README"), undefined);
+  assert.equal(
+    assertUploadOk({ name: "notes.txt", type: "text/plain", size: 4 }),
+    ".txt",
+  );
+  assert.throws(
+    () => assertUploadOk({ name: "image.png", type: "image/png", size: 4 }),
+    /Unsupported file type/,
+  );
+  assert.throws(
+    () =>
+      assertUploadOk({
+        name: "notes.txt",
+        type: "text/plain",
+        size: MAX_UPLOAD_FILE_BYTES + 1,
+      }),
+    /exceeds the 50 MB limit/,
   );
 });
 

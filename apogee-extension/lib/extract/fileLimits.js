@@ -7,7 +7,7 @@ import { UserFacingError } from "../util/userError.js";
 export const MAX_UPLOAD_FILE_BYTES = 50 * 1024 * 1024;
 export const MAX_UPLOAD_FILE_MB = 50;
 
-const UPLOAD_MIME_TYPES = {
+export const UPLOAD_MIME_TYPES = {
   ".pdf": ["application/pdf"],
   ".docx": [
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -18,9 +18,29 @@ const UPLOAD_MIME_TYPES = {
   ".html": ["text/html", "text/plain"],
 };
 
+// Single source for the extension the kind gate and the reader branch on.
+export function uploadExtension(name = "") {
+  return name.toLowerCase().match(/\.[^.]+$/)?.[0];
+}
+
+function uploadLabel(extension) {
+  if (extension === ".pdf") return "PDF";
+  if (extension === ".docx") return "DOCX file";
+  return "file";
+}
+
+// One gate for the whole upload: kind first, then size, both before any read.
+// Returns the extension so the caller picks a reader without repeating the
+// name matching.
+export function assertUploadOk(file) {
+  const extension = uploadExtension(file.name);
+  assertUploadTypeOk(file);
+  assertUploadSizeOk(file.size, uploadLabel(extension));
+  return extension;
+}
+
 export function assertUploadTypeOk({ name = "", type = "" }) {
-  const extension = name.toLowerCase().match(/\.[^.]+$/)?.[0];
-  const allowedTypes = UPLOAD_MIME_TYPES[extension];
+  const allowedTypes = UPLOAD_MIME_TYPES[uploadExtension(name)];
   const mimeType = type.split(";")[0].trim().toLowerCase();
   // Browsers may leave MIME empty or report a generic binary type even for
   // supported files, so these values rely on the extension instead.
