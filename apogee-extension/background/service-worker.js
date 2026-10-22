@@ -1861,7 +1861,8 @@ export async function summarizeMultiTab(tabsToSummarize, opts = {}) {
   if (extractedResults.length === 0 || signal?.aborted) {
     // #468: empty multi-tab input is "nothing to summarize", not a ready/done
     // completion. Use the shared message and skip the Ready notification below.
-    if (extractedResults.length === 0) {
+    // An abort is the user's own choice, so it stays silent.
+    if (extractedResults.length === 0 && !signal?.aborted) {
       if (typeof chrome !== "undefined" && chrome.notifications) {
         chrome.notifications.create("apogee-multitab-error", {
           type: "basic",

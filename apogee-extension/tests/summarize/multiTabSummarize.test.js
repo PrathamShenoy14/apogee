@@ -37,6 +37,15 @@ const { summarizeMultiTab } =
 const { NOTHING_TO_SUMMARIZE_ERROR_MSG } =
   await import("../../lib/util/messages.js");
 
+function readyNotifications() {
+  return notifications.filter(
+    (n) =>
+      String(n.id).endsWith("-ready") ||
+      /ready/i.test(n.opts?.title || "") ||
+      /ready/i.test(n.opts?.message || ""),
+  );
+}
+
 test("PROVIDERS defines LOCAL and not OLLAMA", () => {
   assert.strictEqual(PROVIDERS.LOCAL, "local");
   assert.strictEqual(PROVIDERS.OLLAMA, undefined);
@@ -64,16 +73,37 @@ test("summarizeMultiTab short-circuits empty input with nothing-to-summarize and
     errorNotes[0].opts.message,
     NOTHING_TO_SUMMARIZE_ERROR_MSG,
   );
-  const readyNotes = notifications.filter(
-    (n) =>
-      String(n.id).endsWith("-ready") ||
-      /ready/i.test(n.opts?.title || "") ||
-      /ready/i.test(n.opts?.message || ""),
-  );
   assert.deepStrictEqual(
-    readyNotes,
+    readyNotifications(),
     [],
     "must not fire a ready/done notification",
+  );
+});
+
+test("summarizeMultiTab stays silent when aborted before content is usable (#468)", async () => {
+  notifications.length = 0;
+  const controller = new AbortController();
+  chrome.scripting = {
+    executeScript: async () => [
+      { result: chrome.runtime.getManifest().version },
+    ],
+  };
+  chrome.tabs.sendMessage = async () => {
+    controller.abort();
+    return { content: "   ", title: "Blank Tab", type: "article" };
+  };
+  const result = await summarizeMultiTab(
+    [{ id: 72, url: "https://example.com/blank", title: "Blank Tab" }],
+    { signal: controller.signal },
+  );
+  assert.strictEqual(result, null);
+  const errorNotes = notifications.filter((n) =>
+    String(n.id).includes("multitab-error"),
+  );
+  assert.deepStrictEqual(
+    errorNotes,
+    [],
+    "an aborted run is not a nothing-to-summarize failure",
   );
 });
 
@@ -102,13 +132,7 @@ test("summarizeMultiTab short-circuits when tabs yield no usable content (#468)"
     errorNotes[0].opts.message,
     NOTHING_TO_SUMMARIZE_ERROR_MSG,
   );
-  const readyNotes = notifications.filter(
-    (n) =>
-      String(n.id).endsWith("-ready") ||
-      /ready/i.test(n.opts?.title || "") ||
-      /ready/i.test(n.opts?.message || ""),
-  );
-  assert.deepStrictEqual(readyNotes, []);
+  assert.deepStrictEqual(readyNotifications(), []);
 });
 
 test("summarizeMultiTab handles multi-tab extraction and generates summary for LOCAL provider", async () => {
