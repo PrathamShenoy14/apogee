@@ -23,10 +23,19 @@ chrome.alarms = {
   create: () => {},
   clear: () => {},
 };
+const notifications = [];
+chrome.notifications = {
+  create: (id, opts) => {
+    notifications.push({ id, opts });
+  },
+  onClicked: { addListener: () => {} },
+};
 globalThis.chrome = chrome;
 
 const { summarizeMultiTab } =
   await import("../../background/service-worker.js");
+const { NOTHING_TO_SUMMARIZE_ERROR_MSG } =
+  await import("../../lib/util/messages.js");
 
 test("PROVIDERS defines LOCAL and not OLLAMA", () => {
   assert.strictEqual(PROVIDERS.LOCAL, "local");
@@ -36,6 +45,70 @@ test("PROVIDERS defines LOCAL and not OLLAMA", () => {
 test("summarizeMultiTab returns null when no tabs have extractable content", async () => {
   const result = await summarizeMultiTab([]);
   assert.strictEqual(result, null);
+});
+
+// #468: zero usable tabs must short-circuit with the shared nothing-to-summarize
+// message and must not fire the multi-tab "Ready" / done notification.
+test("summarizeMultiTab short-circuits empty input with nothing-to-summarize and no ready (#468)", async () => {
+  notifications.length = 0;
+  const result = await summarizeMultiTab([]);
+  assert.strictEqual(result, null);
+  const errorNotes = notifications.filter((n) =>
+    String(n.id).includes("multitab-error"),
+  );
+  assert.ok(
+    errorNotes.length >= 1,
+    "should notify that there is nothing to summarize",
+  );
+  assert.strictEqual(
+    errorNotes[0].opts.message,
+    NOTHING_TO_SUMMARIZE_ERROR_MSG,
+  );
+  const readyNotes = notifications.filter(
+    (n) =>
+      String(n.id).endsWith("-ready") ||
+      /ready/i.test(n.opts?.title || "") ||
+      /ready/i.test(n.opts?.message || ""),
+  );
+  assert.deepStrictEqual(
+    readyNotes,
+    [],
+    "must not fire a ready/done notification",
+  );
+});
+
+test("summarizeMultiTab short-circuits when tabs yield no usable content (#468)", async () => {
+  notifications.length = 0;
+  chrome.scripting = {
+    executeScript: async () => [
+      { result: chrome.runtime.getManifest().version },
+    ],
+  };
+  chrome.tabs.sendMessage = async () => ({
+    content: "   ",
+    title: "Blank Tab",
+    type: "article",
+  });
+  const result = await summarizeMultiTab([
+    { id: 70, url: "https://example.com/blank", title: "Blank Tab" },
+    { id: 71, url: "https://example.com/empty", title: "Empty Tab" },
+  ]);
+  assert.strictEqual(result, null);
+  const errorNotes = notifications.filter((n) =>
+    String(n.id).includes("multitab-error"),
+  );
+  assert.ok(errorNotes.length >= 1);
+  assert.strictEqual(
+    errorNotes[0].opts.message,
+    NOTHING_TO_SUMMARIZE_ERROR_MSG,
+  );
+  const readyNotes = notifications.filter(
+    (n) =>
+      String(n.id).endsWith("-ready") ||
+      /ready/i.test(n.opts?.title || "") ||
+      /ready/i.test(n.opts?.message || ""),
+  );
+  assert.deepStrictEqual(readyNotes, []);
 });
 
 test("summarizeMultiTab handles multi-tab extraction and generates summary for LOCAL provider", async () => {
