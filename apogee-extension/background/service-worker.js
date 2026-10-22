@@ -2079,7 +2079,12 @@ export async function summarizeMultiTab(tabsToSummarize, opts = {}) {
   // persistAllowed above); viewState eviction (50 entries, FIFO) and
   // tabs.onRemoved reaping handle the rest.
   const ownerTabId = tabsToSummarize.find((t) => Number.isInteger(t?.id))?.id;
-  if (ownerTabId != null && persistAllowed && !signal?.aborted) {
+  // Ready notification opens the popup, which restores via loadViewState.
+  // When persistence is skipped (history off / private tab), that restore
+  // finds nothing and shows home — so skip the ready ping too (#496).
+  const canSurfaceResult =
+    ownerTabId != null && persistAllowed && !signal?.aborted;
+  if (canSurfaceResult) {
     await saveViewState(ownerTabId, {
       view: "summaryView",
       subview: "summary",
@@ -2094,7 +2099,11 @@ export async function summarizeMultiTab(tabsToSummarize, opts = {}) {
     });
   }
 
-  if (typeof chrome !== "undefined" && chrome.notifications) {
+  if (
+    canSurfaceResult &&
+    typeof chrome !== "undefined" &&
+    chrome.notifications
+  ) {
     chrome.notifications.create(`${notificationId}-ready`, {
       type: "basic",
       iconUrl: chrome.runtime.getURL("assets/icon.png"),

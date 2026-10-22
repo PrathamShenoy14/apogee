@@ -339,6 +339,100 @@ test("summarizeMultiTab skips view-state persistence when history is off", async
   }
 });
 
+test("summarizeMultiTab skips ready notification when history is off (#496)", async () => {
+  await chrome.storage.local.set({
+    settings: {
+      provider: PROVIDERS.LOCAL,
+      localModel: "qwen3:8b",
+      ollamaHost: "http://127.0.0.1:11434",
+      responseFormat: "bullets",
+      summaryLanguage: "auto",
+      saveHistory: false,
+    },
+  });
+  stubTabContentByUrl({
+    50: {
+      content: "Ordinary article text",
+      title: "Ordinary",
+      type: "article",
+    },
+  });
+  const createdNotifications = [];
+  chrome.notifications = {
+    create: (id, opts) => {
+      createdNotifications.push({ id, opts });
+      return id;
+    },
+    onClicked: { addListener: () => {} },
+    onClosed: { addListener: () => {} },
+  };
+  const requested = [];
+  const restore = await setupLocalLoopbackStub(requested);
+  try {
+    const result = await summarizeMultiTab([
+      { id: 50, url: "https://example.com/ordinary", title: "Ordinary" },
+    ]);
+    assert.ok(result);
+    const ready = createdNotifications.filter((n) =>
+      String(n.id).endsWith("-ready"),
+    );
+    assert.deepStrictEqual(
+      ready,
+      [],
+      "ready notification must not fire when the result was not saved",
+    );
+  } finally {
+    restore();
+    delete chrome.notifications;
+  }
+});
+
+test("summarizeMultiTab creates ready notification when history is on (#496)", async () => {
+  await chrome.storage.local.set({
+    settings: {
+      provider: PROVIDERS.LOCAL,
+      localModel: "qwen3:8b",
+      ollamaHost: "http://127.0.0.1:11434",
+      responseFormat: "bullets",
+      summaryLanguage: "auto",
+      saveHistory: true,
+      privateHosts: "",
+    },
+  });
+  stubTabContentByUrl({
+    51: {
+      content: "Ordinary article text",
+      title: "Ordinary",
+      type: "article",
+    },
+  });
+  const createdNotifications = [];
+  chrome.notifications = {
+    create: (id, opts) => {
+      createdNotifications.push({ id, opts });
+      return id;
+    },
+    onClicked: { addListener: () => {} },
+    onClosed: { addListener: () => {} },
+  };
+  const requested = [];
+  const restore = await setupLocalLoopbackStub(requested);
+  try {
+    const result = await summarizeMultiTab([
+      { id: 51, url: "https://example.com/ordinary", title: "Ordinary" },
+    ]);
+    assert.ok(result);
+    const ready = createdNotifications.filter((n) =>
+      String(n.id).endsWith("-ready"),
+    );
+    assert.strictEqual(ready.length, 1);
+    assert.match(ready[0].opts?.title || "", /Ready/i);
+  } finally {
+    restore();
+    delete chrome.notifications;
+  }
+});
+
 test("summarizeMultiTab persists under the numeric owner id and never under a URL key", async () => {
   await chrome.storage.local.set({
     settings: {
