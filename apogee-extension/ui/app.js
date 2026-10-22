@@ -2558,7 +2558,21 @@ document.addEventListener("DOMContentLoaded", async () => {
                 state.summaryText,
               );
               showOnlyView("summaryView");
-              const selPromptsKey = state.promptsCacheKey;
+              // Multi-tab saves promptsCacheKey: null so a stale single-tab
+              // key is not inherited (#494). Rebuild from the tab URL so the
+              // popup listens on the same key the worker broadcasts.
+              let selPromptsKey = state.promptsCacheKey;
+              const restoreFocusKeyword = getGatedFocusKeyword(
+                currentPageData?.type,
+              );
+              if (!selPromptsKey && tab.url) {
+                selPromptsKey = await getPromptsCacheKeyForSettings(
+                  tab.url,
+                  settings,
+                  getModelForSettings(settings),
+                  restoreFocusKeyword,
+                );
+              }
               const stored = selPromptsKey
                 ? await chrome.storage.local.get(selPromptsKey)
                 : {};
@@ -2576,6 +2590,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                   },
                   settings,
                   false,
+                  restoreFocusKeyword,
                 );
               }
               return;
