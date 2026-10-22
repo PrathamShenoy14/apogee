@@ -193,7 +193,7 @@ export async function cancelReader(reader) {
   }
 }
 
-export function releaseReaderLock(reader) {
+function releaseReaderLock(reader) {
   try {
     reader.releaseLock();
   } catch {

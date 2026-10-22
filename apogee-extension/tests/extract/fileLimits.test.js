@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import * as fileLimits from "../../lib/extract/fileLimits.js";
 import { readSource } from "../helpers/readSource.js";
 import {
   BASE64_SLICE_BYTES,
@@ -326,6 +327,10 @@ test("readTextHead streams when file size is unknown (#267)", async () => {
     text: "ok",
     truncated: false,
   });
+});
+
+test("reader lock release stays module-local (#499)", () => {
+  assert.equal("releaseReaderLock" in fileLimits, false);
 });
 
 // Wiring guard (#500): the PDF download path encodes base64 inside the
