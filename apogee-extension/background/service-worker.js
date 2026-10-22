@@ -1858,9 +1858,14 @@ export async function summarizeMultiTab(tabsToSummarize, opts = {}) {
     }
   }
 
+  const ownerTab = (tabsToSummarize || []).find((t) => Number.isInteger(t?.id));
+  const ownerTabId = ownerTab?.id;
+  const ownerTarget = { tabId: ownerTabId, windowId: ownerTab?.windowId };
+
   if (extractedResults.length === 0 || signal?.aborted) {
     if (extractedResults.length === 0) {
       if (typeof chrome !== "undefined" && chrome.notifications) {
+        notificationTargets.set("apogee-multitab-error", ownerTarget);
         chrome.notifications.create("apogee-multitab-error", {
           type: "basic",
           iconUrl: chrome.runtime.getURL("assets/icon.png"),
@@ -1874,6 +1879,7 @@ export async function summarizeMultiTab(tabsToSummarize, opts = {}) {
 
   const notificationId = `apogee-multitab-${Date.now()}`;
   if (typeof chrome !== "undefined" && chrome.notifications) {
+    notificationTargets.set(notificationId, ownerTarget);
     chrome.notifications.create(notificationId, {
       type: "basic",
       iconUrl: chrome.runtime.getURL("assets/icon.png"),
@@ -2078,8 +2084,12 @@ export async function summarizeMultiTab(tabsToSummarize, opts = {}) {
   // Skipped entirely when any tab is private or history is off (see
   // persistAllowed above); viewState eviction (50 entries, FIFO) and
   // tabs.onRemoved reaping handle the rest.
-  const ownerTabId = tabsToSummarize.find((t) => Number.isInteger(t?.id))?.id;
-  if (ownerTabId != null && persistAllowed && !signal?.aborted) {
+  // Ready notification opens the popup, which restores via loadViewState.
+  // When persistence is skipped (history off / private tab), that restore
+  // finds nothing and shows home — so skip the ready ping too (#496).
+  const canSurfaceResult =
+    ownerTabId != null && persistAllowed && !signal?.aborted;
+  if (canSurfaceResult) {
     await saveViewState(ownerTabId, {
       view: "summaryView",
       subview: "summary",
@@ -2094,7 +2104,12 @@ export async function summarizeMultiTab(tabsToSummarize, opts = {}) {
     });
   }
 
-  if (typeof chrome !== "undefined" && chrome.notifications) {
+  if (
+    canSurfaceResult &&
+    typeof chrome !== "undefined" &&
+    chrome.notifications
+  ) {
+    notificationTargets.set(`${notificationId}-ready`, ownerTarget);
     chrome.notifications.create(`${notificationId}-ready`, {
       type: "basic",
       iconUrl: chrome.runtime.getURL("assets/icon.png"),
@@ -2134,16 +2149,6 @@ if (
         }
       }
       await summarizeMultiTab(targetTabs);
-    }
-  });
-}
-
-if (typeof chrome !== "undefined" && chrome.notifications) {
-  chrome.notifications.onClicked.addListener((notificationId) => {
-    if (notificationId.startsWith("apogee-multitab")) {
-      if (typeof chrome.action?.openPopup === "function") {
-        chrome.action.openPopup().catch(() => {});
-      }
     }
   });
 }
