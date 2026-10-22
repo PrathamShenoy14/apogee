@@ -1863,14 +1863,17 @@ export async function summarizeMultiTab(tabsToSummarize, opts = {}) {
   const ownerTarget = { tabId: ownerTabId, windowId: ownerTab?.windowId };
 
   if (extractedResults.length === 0 || signal?.aborted) {
-    if (extractedResults.length === 0) {
+    // #468: empty multi-tab input is "nothing to summarize", not a ready/done
+    // completion. Use the shared message and skip the Ready notification below.
+    // An abort is the user's own choice, so it stays silent.
+    if (extractedResults.length === 0 && !signal?.aborted) {
       if (typeof chrome !== "undefined" && chrome.notifications) {
         notificationTargets.set("apogee-multitab-error", ownerTarget);
         chrome.notifications.create("apogee-multitab-error", {
           type: "basic",
           iconUrl: chrome.runtime.getURL("assets/icon.png"),
           title: "Apogee",
-          message: "Could not extract content from the selected tab(s).",
+          message: NOTHING_TO_SUMMARIZE_ERROR_MSG,
         });
       }
     }
