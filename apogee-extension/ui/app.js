@@ -23,6 +23,12 @@ import { estimateTokens } from "../lib/engines/modelLimits.js";
 import { runStreamingJob, createJobStartGate } from "./jobs.js";
 import { formatEffectiveConfigJSON } from "./effectiveConfig.js";
 import {
+  customContentPromptsCacheKey,
+  getSummaryAndPromptsCacheKeys,
+  restorePromptsContext,
+  savedSummaryRestorePlan,
+} from "./promptsContext.js";
+import {
   gateFocusKeyword,
   isFocusKeywordSupportedType,
   createKeywordPageTracker,
@@ -77,7 +83,6 @@ import {
 } from "../lib/storage/viewState.js";
 import {
   hashUrl,
-  getSummaryCacheKeyForSettings,
   getPromptsCacheKeyForSettings,
   parseSummaryCacheKey,
   persistContent,
@@ -467,7 +472,7 @@ let currentPromptsCacheKey = null;
 
 function startSuggestedQuestionsBg(
   promptsCacheKey,
-  { title, url, summary },
+  { title, url, summary, pageType, selectionText },
   settings,
   persist = true,
   focusKeyword = "",
@@ -480,6 +485,8 @@ function startSuggestedQuestionsBg(
       payload: {
         promptsCacheKey,
         persist,
+        pageType,
+        selectionText,
         providerType: getProviderType(settings),
         host: settings.ollamaHost,
         title,
@@ -508,6 +515,8 @@ async function restoreSuggestedPrompts({
   persist,
   focusKeyword = "",
   useStored = true,
+  pageType = "",
+  selectionText = "",
 }) {
   if (useStored && promptsCacheKey) {
     const stored = await chrome.storage.local.get(promptsCacheKey);
@@ -520,7 +529,7 @@ async function restoreSuggestedPrompts({
   setSuggestedQuestionsLoading();
   startSuggestedQuestionsBg(
     promptsCacheKey,
-    { title: tab.title || "", url: tab.url, summary },
+    { title: tab.title || "", url: tab.url, summary, pageType, selectionText },
     settings,
     persist,
     focusKeyword,
@@ -859,22 +868,7 @@ const EXTRACTOR_INFO = {
 function getGatedFocusKeyword(pageType) {
   return gateFocusKeyword(focusKeywordInput?.value, pageType);
 }
-async function getSummaryCacheKeys(url, settings, model, focusKeyword) {
-  return {
-    cacheKey: await getSummaryCacheKeyForSettings(
-      url,
-      settings,
-      model,
-      focusKeyword,
-    ),
-    promptsCacheKey: await getPromptsCacheKeyForSettings(
-      url,
-      settings,
-      model,
-      focusKeyword,
-    ),
-  };
-}
+
 function updateExtractorChip(pageData) {
   // Visibility lives here so every site that resolves a page's type stays
   // in sync automatically. A visible input that silently does nothing is
@@ -1946,6 +1940,12 @@ async function summarizeActivePage() {
       summaryText: "",
       timeSaved: null,
       promptsCacheKey: null,
+      // Start every job from a clean context: a previous selection summary in
+      // this tab must not relabel or leak into this one.
+      pageType: "",
+      focusKeyword: "",
+      isSelection: false,
+      selectionText: "",
     });
     const settings = await getSettings();
     const model = getModelForSettings(settings);
@@ -1974,15 +1974,22 @@ async function summarizeActivePage() {
     // ignores.
     const focusKeyword = getGatedFocusKeyword(pageData?.type);
 
-    const { cacheKey, promptsCacheKey } = await getSummaryCacheKeys(
+    const pageType = pageData?.type || "";
+    const selectionText =
+      pageType === "selection" ? pageData.content || "" : "";
+
+    const { cacheKey, promptsCacheKey } = await getSummaryAndPromptsCacheKeys(
       tab.url,
       settings,
       model,
       focusKeyword,
+      { pageType, selectionText },
     );
     const finalize = {
       cacheKey,
       promptsCacheKey,
+      pageType,
+      ...(pageType === "selection" ? { isSelection: true, selectionText } : {}),
       persist: await shouldPersist(tab.url),
       persistUrl: tab.url,
       providerType: getProviderType(settings),
@@ -2052,6 +2059,10 @@ async function summarizeActivePage() {
               url: tab.url,
               streamId,
               promptsCacheKey,
+              pageType,
+              focusKeyword,
+              isSelection: pageType === "selection",
+              selectionText,
               summaryLanguage: settings.summaryLanguage,
               translationEngine: settings.translationEngine,
             },
@@ -2594,24 +2605,26 @@ document.addEventListener("DOMContentLoaded", async () => {
               // key is not inherited (#494). Rebuild it from the tab URL so
               // the popup listens on the key the worker broadcasts, but do
               // not read it from storage: it is the single-tab key. The
-              // focus keyword is always empty for a multi-tab synthesis.
-              const isMultiTab = !state.promptsCacheKey;
+              // restored summary's key/focus policy lives in one helper.
+              let fallbackPromptsCacheKey = null;
+              if (!state.promptsCacheKey && tab.url) {
+                fallbackPromptsCacheKey = await getPromptsCacheKeyForSettings(
+                  tab.url,
+                  settings,
+                  getModelForSettings(settings),
+                  "",
+                );
+              }
+              const restorePlan = savedSummaryRestorePlan({
+                state,
+                fallbackPromptsCacheKey,
+              });
               await restoreSuggestedPrompts({
-                promptsCacheKey:
-                  state.promptsCacheKey ||
-                  (tab.url
-                    ? await getPromptsCacheKeyForSettings(
-                        tab.url,
-                        settings,
-                        getModelForSettings(settings),
-                        "",
-                      )
-                    : null),
+                ...restorePlan,
                 tab,
                 summary: state.summaryText,
                 settings,
                 persist: false,
-                useStored: !isMultiTab,
               });
               return;
             }
@@ -2619,13 +2632,23 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         const model = getModelForSettings(settings);
-        const focusKeyword = getGatedFocusKeyword(currentPageData?.type);
-        const { cacheKey, promptsCacheKey } = await getSummaryCacheKeys(
-          tab.url,
-          settings,
-          model,
-          focusKeyword,
-        );
+        const urlState =
+          state?.urlHash === (await hashUrl(tab.url)) ? state : null;
+        const restoredContext = await restorePromptsContext({
+          url: tab.url,
+          state: urlState,
+          currentPageData,
+        });
+        const focusKeyword = getGatedFocusKeyword(restoredContext.pageType);
+
+        const { cacheKey, promptsCacheKey } =
+          await getSummaryAndPromptsCacheKeys(
+            tab.url,
+            settings,
+            model,
+            focusKeyword,
+            restoredContext,
+          );
         const cached = await chrome.storage.local.get([
           cacheKey,
           promptsCacheKey,
@@ -2640,10 +2663,9 @@ document.addEventListener("DOMContentLoaded", async () => {
           makeSummaryPassagesFocusable();
           setSummaryCopyButtonsVisible(!!cached[cacheKey].trim());
           updateResummarizeHint(settings);
-          const badgeInputs =
-            state && state.urlHash === (await hashUrl(tab.url))
-              ? await getTimeSavedInputsForTab(tab, state)
-              : null;
+          const badgeInputs = urlState
+            ? await getTimeSavedInputsForTab(tab, urlState)
+            : null;
           showTimeSavedFromInputs(badgeInputs, cached[cacheKey]);
           showOnlyView("summaryView");
           await restoreSuggestedPrompts({
@@ -2653,6 +2675,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             settings,
             persist: await shouldPersist(tab.url),
             focusKeyword,
+            ...restoredContext,
           });
           return;
         }
@@ -2755,13 +2778,12 @@ async function summarizeCustomContent(title, content, url = "") {
     currentSummaryLanguage = settings.summaryLanguage;
     currentTranslationEngine = settings.translationEngine;
     const sourceUrl = url || "";
-    const cacheIdentity = sourceUrl || `local:${await hashUrl(content)}`;
-
-    const promptsCacheKey = await getPromptsCacheKeyForSettings(
-      cacheIdentity,
+    const promptsCacheKey = await customContentPromptsCacheKey({
+      url: sourceUrl,
+      content,
       settings,
       model,
-    );
+    });
 
     const customArgs = {
       title,
@@ -2777,6 +2799,7 @@ async function summarizeCustomContent(title, content, url = "") {
         tabId: tab?.id,
         jobId,
         persistUrl: "",
+        pageType: "",
         language: settings.summaryLanguage,
         translationEngine: settings.translationEngine,
       },
@@ -2796,6 +2819,10 @@ async function summarizeCustomContent(title, content, url = "") {
             summaryText: "",
             timeSaved: timeSavedInputsFor({ type: "article", content }),
             promptsCacheKey,
+            pageType: "",
+            focusKeyword: "",
+            isSelection: false,
+            selectionText: "",
           });
         }
         return "done";
