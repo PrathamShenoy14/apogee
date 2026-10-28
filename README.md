@@ -146,7 +146,7 @@ Read the full security model in [Privacy and Security Architecture](PRIVACY.md).
 
 - **[Local Ollama Guide](OLLAMA.md)**: Setup steps for local models on macOS, Windows, and Linux.
 
-- **[Translation Reference](TRANSLATION.md)**: Overview of 29 supported target languages and Opus-MT model tiers.
+- **[Translation Reference](TRANSLATION.md)**: Overview of 32 supported target languages and Opus-MT model tiers.
 
 - **[Privacy Architecture](PRIVACY.md)**: Full details on network limits, storage, and permissions.
 
