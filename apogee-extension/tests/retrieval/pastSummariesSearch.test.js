@@ -6,16 +6,9 @@ import {
 } from "../../lib/retrieval/pastSummariesSearch.js";
 import { persistSummary } from "../../lib/storage/pageCache.js";
 import { createExtensionApiMock } from "../helpers/extensionApiMock.js";
+import { deferred } from "../helpers/deferred.js";
 
 beforeEach(clearPastSummariesSearchCache);
-
-function deferred() {
-  let resolve;
-  const promise = new Promise((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 test("searchPastSummaries returns all entries when query is empty", async () => {
   const cacheOrder = [

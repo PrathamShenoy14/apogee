@@ -3,19 +3,12 @@ import assert from "node:assert";
 import fs from "node:fs";
 import { searchPastSummaries } from "../../lib/retrieval/pastSummariesSearch.js";
 import { createPastSummariesController } from "../../ui/pastSummaries.js";
+import { deferred } from "../helpers/deferred.js";
 
 const appSource = fs.readFileSync(
   new URL("../../ui/app.js", import.meta.url),
   "utf-8",
 );
-
-function deferred() {
-  let resolve;
-  const promise = new Promise((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 function fixture(overrides = {}) {
   const cacheOrder = Array.from({ length: 12 }, (_, i) => ({
